@@ -1,0 +1,33 @@
+[package]
+name = "cos-executive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Central Company Executive runtime, task routing, approval coordination, and vertical slice execution"
+
+[dependencies]
+cos-domain = { path = "../cos-domain" }
+cos-identity = { path = "../cos-identity" }
+cos-contracts = { path = "../cos-contracts" }
+cos-governance = { path = "../cos-governance" }
+cos-approval = { path = "../cos-approval" }
+cos-audit = { path = "../cos-audit" }
+cos-tools = { path = "../cos-tools" }
+cos-memory = { path = "../cos-memory" }
+cos-knowledge = { path = "../cos-knowledge" }
+cos-agents = { path = "../cos-agents" }
+cos-goals = { path = "../cos-goals" }
+cos-planning = { path = "../cos-planning" }
+cos-outcomes = { path = "../cos-outcomes" }
+cos-learning = { path = "../cos-learning" }
+cos-config = { path = "../cos-config" }
+tokio.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]

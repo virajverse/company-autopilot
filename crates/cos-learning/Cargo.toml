@@ -1,0 +1,19 @@
+[package]
+name = "cos-learning"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+cos-domain = { path = "../cos-domain" }
+cos-identity = { path = "../cos-identity" }
+cos-contracts = { path = "../cos-contracts" }
+cos-memory = { path = "../cos-memory" }
+cos-knowledge = { path = "../cos-knowledge" }
+cos-outcomes = { path = "../cos-outcomes" }
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+thiserror.workspace = true

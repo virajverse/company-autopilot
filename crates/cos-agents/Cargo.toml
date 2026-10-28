@@ -1,0 +1,23 @@
+[package]
+name = "cos-agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Role-based agent implementations and deterministic procedures for Autonomous Company OS"
+
+[dependencies]
+cos-domain = { path = "../cos-domain" }
+cos-identity = { path = "../cos-identity" }
+cos-contracts = { path = "../cos-contracts" }
+cos-memory = { path = "../cos-memory" }
+cos-llm = { path = "../cos-llm" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+async-trait.workspace = true

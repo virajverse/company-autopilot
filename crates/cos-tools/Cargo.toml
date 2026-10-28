@@ -1,0 +1,23 @@
+[package]
+name = "cos-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Tool gateway, capability-checked execution adapters, atomic idempotency, and side-effect boundaries"
+
+[dependencies]
+cos-domain = { path = "../cos-domain" }
+cos-identity = { path = "../cos-identity" }
+cos-contracts = { path = "../cos-contracts" }
+cos-governance = { path = "../cos-governance" }
+cos-approval = { path = "../cos-approval" }
+cos-audit = { path = "../cos-audit" }
+reqwest = { workspace = true }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
