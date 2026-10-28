@@ -1,0 +1,34 @@
+[package]
+name = "cos-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+cos-domain = { path = "../cos-domain" }
+cos-contracts = { path = "../cos-contracts" }
+cos-identity = { path = "../cos-identity" }
+cos-governance = { path = "../cos-governance" }
+cos-audit = { path = "../cos-audit" }
+cos-approval = { path = "../cos-approval" }
+cos-tools = { path = "../cos-tools" }
+cos-memory = { path = "../cos-memory" }
+cos-knowledge = { path = "../cos-knowledge" }
+cos-agents = { path = "../cos-agents" }
+cos-executive = { path = "../cos-executive" }
+cos-goals = { path = "../cos-goals" }
+cos-planning = { path = "../cos-planning" }
+cos-outcomes = { path = "../cos-outcomes" }
+cos-learning = { path = "../cos-learning" }
+cos-persistence = { path = "../cos-persistence" }
+cos-llm = { path = "../cos-llm" }
+cos-api = { path = "../cos-api" }
+cos-config = { path = "../cos-config" }
+axum.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true

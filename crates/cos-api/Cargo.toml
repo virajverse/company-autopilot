@@ -1,0 +1,37 @@
+[package]
+name = "cos-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+cos-domain = { path = "../cos-domain" }
+cos-contracts = { path = "../cos-contracts" }
+cos-identity = { path = "../cos-identity" }
+cos-governance = { path = "../cos-governance" }
+cos-audit = { path = "../cos-audit" }
+cos-approval = { path = "../cos-approval" }
+cos-memory = { path = "../cos-memory" }
+cos-goals = { path = "../cos-goals" }
+cos-planning = { path = "../cos-planning" }
+cos-outcomes = { path = "../cos-outcomes" }
+cos-learning = { path = "../cos-learning" }
+cos-llm = { path = "../cos-llm" }
+cos-persistence = { path = "../cos-persistence" }
+cos-executive = { path = "../cos-executive" }
+futures-util = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+axum.workspace = true
+tower-http.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+reqwest.workspace = true
