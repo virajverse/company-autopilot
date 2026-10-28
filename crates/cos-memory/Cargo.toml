@@ -1,0 +1,18 @@
+[package]
+name = "cos-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Scoped memory storage, client isolation, and versioned working/long-term memory records for Autonomous Company OS"
+
+[dependencies]
+cos-domain = { path = "../cos-domain" }
+cos-identity = { path = "../cos-identity" }
+cos-contracts = { path = "../cos-contracts" }
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
