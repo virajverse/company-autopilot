@@ -1,0 +1,14 @@
+[package]
+name = "cos-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "System, governance, agent templates, and runtime limits configuration for Autonomous Company OS"
+
+[dependencies]
+serde.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]

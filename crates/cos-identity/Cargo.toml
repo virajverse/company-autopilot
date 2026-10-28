@@ -1,0 +1,18 @@
+[package]
+name = "cos-identity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Authenticated actor identities, categories, credential references, and identity verification ports"
+
+[dependencies]
+cos-domain = { path = "../cos-domain" }
+cos-config = { path = "../cos-config" }
+serde.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
