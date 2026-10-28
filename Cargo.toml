@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cos-domain",
+    "crates/cos-identity",
+    "crates/cos-contracts",
+    "crates/cos-governance",
+    "crates/cos-audit",
+    "crates/cos-approval",
+    "crates/cos-tools",
+    "crates/cos-memory",
+    "crates/cos-knowledge",
+    "crates/cos-agents",
+    "crates/cos-executive",
+    "crates/cos-config",
+    "crates/cos-llm",
+    "crates/cos-goals",
+    "crates/cos-planning",
+    "crates/cos-outcomes",
+    "crates/cos-learning",
+    "crates/cos-persistence",
+    "crates/cos-api",
+    "crates/cos-node",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Viraj Srivastav <virajsrivastav1112@gmail.com>"]
+repository = "https://github.com/virajsrivastav/viraj-verse"
+homepage = "https://virajverse.com"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1.0"
+tokio = { version = "1.40", features = ["full"] }
+sha2 = "0.10"
+tracing = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+async-trait = "0.1"
+axum = "0.7"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing-subscriber = "0.3"
+rusqlite = { version = "0.32", features = ["bundled"] }

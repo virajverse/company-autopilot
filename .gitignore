@@ -1,0 +1,26 @@
+# Rust build artifacts
+/target
+**/*.rs.bk
+*.pdb
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Runtime databases and storage directories
+/data
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/

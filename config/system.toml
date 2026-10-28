@@ -1,0 +1,18 @@
+# Viraj Verse - Autonomous Company Operating System
+# Zero business copy or sales templates: All business knowledge lives dynamically in Memory.
+
+[governance]
+default_grant_duration_minutes = 15
+default_approval_duration_hours = 24
+default_grant_max_calls = 3
+policy_version = 1
+
+[auth_providers]
+system_provider = "system_internal"
+executive_provider = "executive_internal"
+founder_provider = "founder_auth_provider"
+agent_provider = "runtime_agent_manager"
+system_credential_prefix = "system://"
+executive_credential_uri = "system://executive"
+founder_credential_uri = "auth://founder_credential"
+agent_credential_prefix = "agent://"
