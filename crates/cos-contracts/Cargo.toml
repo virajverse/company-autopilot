@@ -1,0 +1,19 @@
+[package]
+name = "cos-contracts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Envelopes, canonical task grants, action digests, and tracing contracts for Autonomous Company OS"
+
+[dependencies]
+cos-domain = { path = "../cos-domain" }
+cos-identity = { path = "../cos-identity" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
