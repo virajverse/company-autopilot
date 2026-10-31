@@ -1,5 +1,7 @@
-use cos_contracts::Capability;
-use cos_domain::TaskId;
+use chrono::Utc;
+use cos_approval::{ApprovalQueryPort, ApprovalRequest};
+use cos_contracts::{ActionDigest, Capability};
+use cos_domain::{ApprovalStatus, RiskClass, TaskId, TaskStatus};
 use cos_goals::{AnomalyDetector, GoalForest, GoalId, GoalStatus, SelfGoalGovernor};
 use cos_learning::{LearningEngine, LearningProposal};
 use cos_memory::MemoryNamespace;
@@ -9,7 +11,22 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use tracing::{debug, info, warn};
 
-use crate::{CompanyExecutive, DispatchActionParams, ProcessTaskParams};
+use crate::{CompanyExecutive, DispatchActionParams, ProcessTaskParams, TaskRecord};
+
+/// Execution state preserved while a high-risk or policy-mandated task awaits human approval.
+#[derive(Debug, Clone)]
+pub struct PendingTaskExecution {
+    pub goal_id: GoalId,
+    pub task_id: TaskId,
+    pub title: String,
+    pub required_role: String,
+    pub target_tool: String,
+    pub required_capability: Capability,
+    pub input_payload: serde_json::Value,
+    pub approval: ApprovalRequest,
+    pub digest: ActionDigest,
+    pub risk_class: RiskClass,
+}
 
 /// Summary of activity performed during a single autonomous engine tick.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -38,6 +55,8 @@ pub struct AutonomousEngine {
     pub outcomes: Arc<OutcomeRegistry>,
     pub plans: RwLock<HashMap<GoalId, ExecutionPlan>>,
     pub completed_tasks: RwLock<HashSet<TaskId>>,
+    pub pending_approval_tasks: RwLock<HashMap<TaskId, PendingTaskExecution>>,
+    pub approval_query: Option<Arc<dyn ApprovalQueryPort>>,
 }
 
 impl AutonomousEngine {
@@ -56,14 +75,136 @@ impl AutonomousEngine {
             outcomes: Arc::new(OutcomeRegistry::new()),
             plans: RwLock::new(HashMap::new()),
             completed_tasks: RwLock::new(HashSet::new()),
+            pending_approval_tasks: RwLock::new(HashMap::new()),
+            approval_query: None,
         }
     }
 
-    /// Performs one discrete pass of the autonomous executive loop.
+    /// Attaches an approval query port so the engine automatically detects and resumes
+    /// tasks after human approval decisions without requiring polling or external intervention.
+    pub fn with_approval_query(mut self, port: Arc<dyn ApprovalQueryPort>) -> Self {
+        self.approval_query = Some(port);
+        self
+    }
+
+    /// Performs one discrete pass of the autonomous executive loop in strict causal sequence:
+    ///
+    /// 1. RESUME APPROVED TASKS: Checks pending approvals and dispatches tasks approved by human reviewer.
+    /// 2. GOAL DECOMPOSITION: Decomposes active goals into DAG execution plans using Memory SOPs.
+    /// 3. TASK EXECUTION: Dispatches ready tasks, preserving strict DAG order and preventing duplicates.
+    /// 4. ANOMALY EVALUATION: Detects deviations and injects autonomous remediation goals.
     pub fn tick(&self) -> Result<TickSummary, Box<dyn std::error::Error>> {
         let mut summary = TickSummary::default();
 
-        // 1. Gather all active goals from the GoalForest
+        // PHASE 1: Resume / Unblock tasks that have received human approval
+        if let Some(ref query) = self.approval_query {
+            let pending_list: Vec<(TaskId, PendingTaskExecution)> = {
+                let pending = self.pending_approval_tasks.read().unwrap();
+                pending.iter().map(|(k, v)| (*k, v.clone())).collect()
+            };
+
+            for (task_id, pending_item) in pending_list {
+                if let Some(app) = query.get_approval(&pending_item.approval.approval_id) {
+                    match app.status {
+                        ApprovalStatus::Approved => {
+                            info!(
+                                "Approval confirmed by {:?} for task '{}'! Dispatching execution...",
+                                app.decision_actor, pending_item.title
+                            );
+                            let mut task_record = TaskRecord {
+                                task_id,
+                                title: pending_item.title.clone(),
+                                assigned_agent: None,
+                                status: TaskStatus::AwaitingApproval,
+                                created_at: Utc::now(),
+                            };
+
+                            let dispatch_params = DispatchActionParams {
+                                approval: Some(app.clone()),
+                                approver: app.decision_actor.clone(),
+                                target_role: pending_item.required_role.clone(),
+                                tool_name: pending_item.target_tool.clone(),
+                                capability: pending_item.required_capability.clone(),
+                                payload: pending_item.input_payload.clone(),
+                                digest: pending_item.digest,
+                                risk_class: pending_item.risk_class,
+                                client_scope: None,
+                                idempotency_key: format!("auto_{}", task_id),
+                            };
+
+                            match self
+                                .executive
+                                .dispatch_action(&mut task_record, dispatch_params)
+                            {
+                                Ok(_) => {
+                                    self.completed_tasks.write().unwrap().insert(task_id);
+                                    self.pending_approval_tasks
+                                        .write()
+                                        .unwrap()
+                                        .remove(&task_id);
+                                    summary.tasks_executed += 1;
+
+                                    let outcome = OutcomeRecord::new(
+                                        task_id,
+                                        OutcomeStatus::Success,
+                                        format!(
+                                            "Task '{}' executed successfully following human approval",
+                                            pending_item.title
+                                        ),
+                                        1.0,
+                                        self.executive.executive_identity.clone(),
+                                    );
+                                    let _ = self.outcomes.record(outcome);
+
+                                    let mut forest = self.forest.write().unwrap();
+                                    if let Some(first_crit) = forest
+                                        .get_goal(&pending_item.goal_id)
+                                        .and_then(|g| g.criteria.first())
+                                        .map(|c| c.name.clone())
+                                    {
+                                        let _ = forest.update_criterion(
+                                            &pending_item.goal_id,
+                                            &first_crit,
+                                            1.0,
+                                        );
+                                    }
+                                }
+                                Err(err) => {
+                                    warn!(
+                                        "Approved action dispatch failed for '{}': {}",
+                                        pending_item.title, err
+                                    );
+                                }
+                            }
+                        }
+                        ApprovalStatus::Rejected => {
+                            info!(
+                                "Approval rejected for task '{}'. Halting branch.",
+                                pending_item.title
+                            );
+                            self.pending_approval_tasks
+                                        .write()
+                                        .unwrap()
+                                        .remove(&task_id);
+                            let outcome = OutcomeRecord::new(
+                                task_id,
+                                OutcomeStatus::Failure,
+                                format!(
+                                    "Task '{}' rejected by human approver",
+                                    pending_item.title
+                                ),
+                                0.0,
+                                self.executive.executive_identity.clone(),
+                            );
+                            let _ = self.outcomes.record(outcome);
+                        }
+                        _ => {} // Still awaiting decision or expired
+                    }
+                }
+            }
+        }
+
+        // PHASE 2: Gather all active goals from the GoalForest
         let active_goals = {
             let forest = self.forest.read().unwrap();
             forest
@@ -75,7 +216,7 @@ impl AutonomousEngine {
 
         summary.goals_evaluated = active_goals.len();
 
-        // 2. Goal Decomposition: ensure every active goal has an ExecutionPlan
+        // Ensure every active goal has an ExecutionPlan
         for goal in &active_goals {
             let has_plan = {
                 let plans = self.plans.read().unwrap();
@@ -83,7 +224,6 @@ impl AutonomousEngine {
             };
 
             if !has_plan {
-                // Decompose goal using dynamic memory SOP templates
                 match self
                     .planner
                     .plan_from_goal(goal, &self.executive.memory_store)
@@ -104,8 +244,16 @@ impl AutonomousEngine {
             }
         }
 
-        // 3. Task Execution: find and execute ready tasks in active plans
+        // PHASE 3: Task Execution in Strict DAG Order (Filtered for Concurrency & Zero Duplicates)
         let completed_snapshot = self.completed_tasks.read().unwrap().clone();
+        let pending_snapshot: HashSet<TaskId> = self
+            .pending_approval_tasks
+            .read()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+
         let plan_goal_ids: Vec<GoalId> = self.plans.read().unwrap().keys().cloned().collect();
 
         for goal_id in plan_goal_ids {
@@ -114,6 +262,7 @@ impl AutonomousEngine {
                 if let Some(plan) = plans.get(&goal_id) {
                     plan.get_ready_tasks(&completed_snapshot)
                         .into_iter()
+                        .filter(|t| !pending_snapshot.contains(&t.id))
                         .cloned()
                         .collect::<Vec<_>>()
                 } else {
@@ -183,12 +332,26 @@ impl AutonomousEngine {
 
                 match self.executive.process_generic_task(params) {
                     Ok((task_record, approval, digest)) => {
-                        if approval.is_some() {
-                            // High risk or non-preapproved R2: waiting for human approval
+                        if let Some(req) = approval {
                             summary.tasks_awaiting_approval += 1;
                             debug!(
                                 "Task '{}' requires human signoff before execution",
                                 task.title
+                            );
+                            self.pending_approval_tasks.write().unwrap().insert(
+                                task.id,
+                                PendingTaskExecution {
+                                    goal_id,
+                                    task_id: task.id,
+                                    title: task.title.clone(),
+                                    required_role: task.required_role.clone(),
+                                    target_tool: target_tool.clone(),
+                                    required_capability: required_capability.clone(),
+                                    input_payload: task.input_payload.clone(),
+                                    approval: req,
+                                    digest,
+                                    risk_class: task.estimated_risk,
+                                },
                             );
                         } else {
                             // Low risk (R0, R1) or pre-approved R2: immediately dispatch
@@ -271,7 +434,7 @@ impl AutonomousEngine {
             }
         }
 
-        // 4. Operational Anomaly Evaluation (Phase 9)
+        // PHASE 4: Operational Anomaly Evaluation (Self-Healing Governance)
         for goal in &active_goals {
             if let Some(anomaly) = self.detector.evaluate_goal(goal) {
                 summary.anomalies_detected += 1;

@@ -125,6 +125,12 @@ impl MemoryRepository for PersistenceEngine {
     }
 }
 
+impl cos_approval::ApprovalQueryPort for PersistenceEngine {
+    fn get_approval(&self, id: &ApprovalId) -> Option<ApprovalRequest> {
+        ApprovalRepository::get_approval(self, id).ok().flatten()
+    }
+}
+
 impl ApprovalRepository for PersistenceEngine {
     fn save_approval(&self, request: &ApprovalRequest) -> Result<(), PersistenceError> {
         match self {

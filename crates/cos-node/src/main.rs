@@ -74,9 +74,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let forest = Arc::new(RwLock::new(GoalForest::new()));
     let learning = Arc::new(LearningEngine::new());
 
-    // 8. Launch Autonomous Heartbeat Daemon in background
+    // 8. Launch Autonomous Heartbeat Daemon in background (with persistent approval query port)
     let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
-    let engine = Arc::new(AutonomousEngine::new(executive, forest, learning));
+    let engine = Arc::new(
+        AutonomousEngine::new(executive, forest, learning).with_approval_query(store.clone()),
+    );
     let engine_worker = engine.clone();
     tokio::spawn(async move {
         engine_worker

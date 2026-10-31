@@ -31,6 +31,11 @@ pub enum ApprovalError {
     AlreadyConsumed,
 }
 
+/// Abstract read-only port to query approval states across decoupled layers.
+pub trait ApprovalQueryPort: Send + Sync {
+    fn get_approval(&self, id: &ApprovalId) -> Option<ApprovalRequest>;
+}
+
 /// An approval request bound to an exact ActionDigest and Task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalRequest {

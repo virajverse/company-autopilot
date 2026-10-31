@@ -236,6 +236,12 @@ impl MemoryRepository for SqliteStore {
     }
 }
 
+impl cos_approval::ApprovalQueryPort for SqliteStore {
+    fn get_approval(&self, id: &ApprovalId) -> Option<ApprovalRequest> {
+        ApprovalRepository::get_approval(self, id).ok().flatten()
+    }
+}
+
 impl ApprovalRepository for SqliteStore {
     fn save_approval(&self, request: &ApprovalRequest) -> Result<(), PersistenceError> {
         let conn = self.conn.lock().unwrap();

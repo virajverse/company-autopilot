@@ -54,7 +54,7 @@ pub trait MemoryRepository: Send + Sync {
 }
 
 /// Trait for durable persistence of human approval requests.
-pub trait ApprovalRepository: Send + Sync {
+pub trait ApprovalRepository: cos_approval::ApprovalQueryPort + Send + Sync {
     fn save_approval(&self, request: &ApprovalRequest) -> Result<(), PersistenceError>;
     fn get_approval(&self, id: &ApprovalId) -> Result<Option<ApprovalRequest>, PersistenceError>;
     fn list_pending(&self) -> Result<Vec<ApprovalRequest>, PersistenceError>;

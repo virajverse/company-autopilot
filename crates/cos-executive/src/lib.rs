@@ -440,14 +440,16 @@ impl CompanyExecutive {
 
         // Handle approval consumption if present
         let approval_id = if let Some(mut app) = params.approval {
-            let decision_actor = params.approver.as_ref().ok_or_else(|| {
-                ExecutiveError::TaskError(
-                    "Approver identity required for approved task".to_string(),
-                )
-            })?;
+            if app.status != cos_domain::ApprovalStatus::Approved {
+                let decision_actor = params.approver.as_ref().ok_or_else(|| {
+                    ExecutiveError::TaskError(
+                        "Approver identity required for approved task".to_string(),
+                    )
+                })?;
 
-            app.approve(decision_actor.clone(), "Authorized by human reviewer", now)
-                .map_err(|e| ExecutiveError::TaskError(format!("{:?}", e)))?;
+                app.approve(decision_actor.clone(), "Authorized by human reviewer", now)
+                    .map_err(|e| ExecutiveError::TaskError(format!("{:?}", e)))?;
+            }
 
             app.consume()
                 .map_err(|e| ExecutiveError::TaskError(format!("{:?}", e)))?;
@@ -545,7 +547,7 @@ impl CompanyExecutive {
 mod tests {
     use super::*;
     use cos_audit::InMemoryAuditLogger;
-    use cos_domain::SubjectId;
+    use cos_domain::{ApprovalId, ApprovalStatus, SubjectId};
     use cos_memory::{MemoryKind, MemoryRecord, ProvenanceType};
     use cos_tools::ToolAdapter;
 
@@ -892,5 +894,116 @@ mod tests {
         assert!(research_agent
             .capabilities
             .contains(&Capability::new("web_research")));
+    }
+
+    struct InMemoryApprovalQueryStore {
+        approvals: RwLock<HashMap<ApprovalId, ApprovalRequest>>,
+    }
+
+    impl cos_approval::ApprovalQueryPort for InMemoryApprovalQueryStore {
+        fn get_approval(&self, id: &ApprovalId) -> Option<ApprovalRequest> {
+            self.approvals.read().unwrap().get(id).cloned()
+        }
+    }
+
+    #[test]
+    fn test_autonomous_engine_approval_sequence_and_resume() {
+        let temp_dir = std::env::temp_dir().join(format!("cos-approval-seq-{}", Uuid::new_v4()));
+        let tenant_id = TenantId::new_v7();
+        let audit = Arc::new(InMemoryAuditLogger::new());
+        let memory = Arc::new(MemoryStore::new());
+        let tool_gateway = Arc::new(ToolGateway::new(audit.clone()));
+        tool_gateway.register_tool(Arc::new(cos_tools::FileDeliverableAdapter::new(&temp_dir)));
+
+        let executive = Arc::new(CompanyExecutive::new(
+            tenant_id,
+            audit,
+            memory.clone(),
+            tool_gateway,
+        ));
+
+        // Seed Discovery role SOP template in memory with an R3 task that mandates human approval
+        let proposal_sop = cos_memory::MemoryRecord::new(
+            MemoryNamespace::Company,
+            cos_memory::MemoryKind::Procedure,
+            "sop:discovery_and_proposal",
+            serde_json::json!({
+                "tasks": [
+                    {
+                        "title": "Draft Binding Enterprise Contract",
+                        "role": "discovery_and_proposal",
+                        "target_tool": "file_deliverable",
+                        "required_capability": "filesystem_write",
+                        "risk_class": "R3_BUSINESS_COMMITMENT",
+                        "dependencies": [],
+                        "payload": {
+                            "file_name": "enterprise_quote.md",
+                            "content": "# Enterprise Quote: $150,000\nBinding commercial commitment."
+                        }
+                    }
+                ]
+            }),
+            cos_domain::KnowledgeLifecycle::Verified,
+            1.0,
+            cos_memory::ProvenanceType::Learned,
+            ActorIdentity::system("test_admin"),
+        );
+        memory.store(proposal_sop).unwrap();
+
+        let mut forest_inner = cos_goals::GoalForest::new();
+        let mut goal =
+            cos_goals::Goal::new("Enterprise Proposal", "Draft binding enterprise quote")
+                .with_sop_key_hint("sop:discovery_and_proposal");
+        goal.status = cos_goals::GoalStatus::Active;
+        forest_inner.add_goal(goal).unwrap();
+
+        let forest = Arc::new(RwLock::new(forest_inner));
+        let learning = Arc::new(cos_learning::LearningEngine::new());
+        let approval_store = Arc::new(InMemoryApprovalQueryStore {
+            approvals: RwLock::new(HashMap::new()),
+        });
+
+        let engine = AutonomousEngine::new(executive, forest, learning)
+            .with_approval_query(approval_store.clone());
+
+        // TICK 1: Task is evaluated -> Requires human approval!
+        let summary1 = engine.tick().expect("Tick 1 failed");
+        assert_eq!(summary1.tasks_awaiting_approval, 1);
+        assert_eq!(summary1.tasks_executed, 0);
+
+        // Verify task was staged in pending_approval_tasks (not duplicated on next tick)
+        let pending = engine.pending_approval_tasks.read().unwrap();
+        assert_eq!(pending.len(), 1);
+        let (_task_id, pending_item) = pending.iter().next().unwrap();
+        let app_id = pending_item.approval.approval_id;
+
+        // Store the approval in the query port as Pending
+        approval_store
+            .approvals
+            .write()
+            .unwrap()
+            .insert(app_id, pending_item.approval.clone());
+        drop(pending);
+
+        // TICK 2: While still pending, tick does NOT duplicate or re-request approval!
+        let summary2 = engine.tick().expect("Tick 2 failed");
+        assert_eq!(summary2.tasks_awaiting_approval, 0);
+        assert_eq!(summary2.tasks_executed, 0);
+
+        // Founder approves the request!
+        {
+            let mut store_lock = approval_store.approvals.write().unwrap();
+            let app = store_lock.get_mut(&app_id).unwrap();
+            app.status = ApprovalStatus::Approved;
+            app.decision_actor = Some(ActorIdentity::founder(SubjectId::new_v7(), None));
+        }
+
+        // TICK 3: Engine resumes approved task, executes action, and updates completed tasks!
+        let summary3 = engine.tick().expect("Tick 3 failed");
+        assert_eq!(summary3.tasks_executed, 1);
+        assert_eq!(engine.completed_tasks.read().unwrap().len(), 1);
+        assert_eq!(engine.pending_approval_tasks.read().unwrap().len(), 0);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
