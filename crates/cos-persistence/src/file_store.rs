@@ -76,8 +76,12 @@ impl FileStore {
     }
 
     fn memory_key_path(&self, namespace: &MemoryNamespace, key: &str) -> PathBuf {
+        let safe_key = key
+            .replace(':', "_COLON_")
+            .replace('/', "_SLASH_")
+            .replace('\\', "_BSLASH_");
         self.memory_namespace_dir(namespace)
-            .join(format!("{}.json", key))
+            .join(format!("{}.json", safe_key))
     }
 }
 

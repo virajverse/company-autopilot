@@ -8,7 +8,7 @@ use axum::{
 use cos_audit::{AuditEvent, AuditEventType};
 use cos_domain::{ApprovalId, SubjectId};
 use cos_identity::ActorIdentity;
-use cos_persistence::{ApprovalRepository, AuditRepository};
+use cos_persistence::{ApprovalRepository, AuditRepository, MemoryRepository};
 use serde::Deserialize;
 use std::str::FromStr;
 use uuid::Uuid;
@@ -77,7 +77,7 @@ pub async fn decide_approval(
     let dec = payload.decision.trim().to_lowercase();
     match dec.as_str() {
         "approve" | "approved" | "accept" | "accepted" | "yes" => {
-            if let Err(e) = request.approve(approver, reason.clone(), now) {
+            if let Err(e) = request.approve(approver.clone(), reason.clone(), now) {
                 return (
                     StatusCode::UNPROCESSABLE_ENTITY,
                     Json(serde_json::json!({ "error": e.to_string() })),
@@ -86,7 +86,7 @@ pub async fn decide_approval(
             }
         }
         "reject" | "rejected" | "deny" | "denied" | "no" => {
-            if let Err(e) = request.reject(approver, reason.clone(), now) {
+            if let Err(e) = request.reject(approver.clone(), reason.clone(), now) {
                 return (
                     StatusCode::UNPROCESSABLE_ENTITY,
                     Json(serde_json::json!({ "error": e.to_string() })),
@@ -112,6 +112,27 @@ pub async fn decide_approval(
         )
             .into_response();
     }
+
+    // SELF-LEARNING LOOP: Record the founder's verified decision into permanent Memory
+    // Future runs query this precedent so identical decisions execute with zero hesitation.
+    let learned_memory = cos_memory::MemoryRecord::new(
+        cos_memory::MemoryNamespace::Company,
+        cos_memory::MemoryKind::Guideline,
+        format!("policy:precedent:{}", request.task_id),
+        serde_json::json!({
+            "task_id": request.task_id,
+            "decision": dec,
+            "guidance_reason": reason,
+            "action_digest": request.action_digest,
+            "risk_class": request.risk_class,
+            "learned_rule": format!("Verified founder decision '{}' applied to task '{}'", dec, request.task_id),
+        }),
+        cos_domain::KnowledgeLifecycle::Verified,
+        1.0,
+        cos_memory::ProvenanceType::Learned,
+        approver,
+    );
+    let _ = state.store.save_record(&learned_memory);
 
     // IMMUTABLE AUDIT TRAIL: Record the approval decision event
     let audit_event = AuditEvent::new(

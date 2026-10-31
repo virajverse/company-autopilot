@@ -1,7 +1,7 @@
 use cos_api::{build_app_router, AppState};
 use cos_approval::ApprovalRequest;
 use cos_domain::RiskClass;
-use cos_persistence::{ApprovalRepository, FileStore};
+use cos_persistence::{ApprovalRepository, FileStore, MemoryRepository};
 use std::sync::Arc;
 
 async fn spawn_test_server() -> (String, Arc<FileStore>) {
@@ -166,6 +166,21 @@ async fn test_approvals_workflow_api() {
         audit_events[0].get("event_type").unwrap(),
         "APPROVAL_DECIDED"
     );
+
+    // 5. Verify Self-Learning Loop: Founder's decision was stored into permanent Memory as a verified precedent
+    let learned_rec = store
+        .get_record(
+            &cos_memory::MemoryNamespace::Company,
+            &format!("policy:precedent:{}", task_id),
+        )
+        .expect("Query memory failed")
+        .expect("Learned memory precedent record should exist");
+    assert_eq!(learned_rec.content["decision"], "approve");
+    assert_eq!(
+        learned_rec.lifecycle_status,
+        cos_domain::KnowledgeLifecycle::Verified
+    );
+    assert_eq!(learned_rec.confidence, 1.0);
 }
 
 #[tokio::test]

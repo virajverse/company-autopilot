@@ -1,14 +1,15 @@
 mod bootstrap;
 
-use cos_agents::DynamicAgent;
 use cos_api::{build_app_router, AppState};
-use cos_contracts::Capability;
 use cos_domain::TenantId;
 use cos_executive::{AutonomousEngine, CompanyExecutive};
 use cos_goals::GoalForest;
 use cos_learning::LearningEngine;
 use cos_persistence::PersistenceEngine;
-use cos_tools::{FileDeliverableAdapter, HttpWebhookAdapter, NotificationToolAdapter, ToolGateway};
+use cos_tools::{
+    FileDeliverableAdapter, HttpWebhookAdapter, NotificationToolAdapter, ToolGateway,
+    WebResearchToolAdapter,
+};
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use tracing::info;
@@ -51,6 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tool_gateway.register_tool(Arc::new(FileDeliverableAdapter::default_dir()));
     tool_gateway.register_tool(Arc::new(NotificationToolAdapter::new()));
     tool_gateway.register_tool(Arc::new(HttpWebhookAdapter::new()));
+    tool_gateway.register_tool(Arc::new(WebResearchToolAdapter::new()));
 
     // 5. Initialize central Company Executive runtime
     let tenant_id = TenantId::new_v7();
@@ -61,36 +63,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tool_gateway,
     ));
 
-    // 6. Register 4 canonical MVP specialist agent roles
-    executive.register_agent(DynamicAgent::new(
-        "sales_and_lead",
-        "Qualify inbound inquiries and prepare structured follow-up proposals",
-        vec![
-            Capability::new("send_notification"),
-            Capability::new("network_http"),
-        ],
-    ));
-    executive.register_agent(DynamicAgent::new(
-        "discovery_and_proposal",
-        "Translate client requirements into technical specifications and work proposals",
-        vec![
-            Capability::new("filesystem_write"),
-            Capability::new("send_notification"),
-        ],
-    ));
-    executive.register_agent(DynamicAgent::new(
-        "project_operations",
-        "Coordinate task DAG execution, milestone validation, and deliverable handoffs",
-        vec![
-            Capability::new("filesystem_write"),
-            Capability::new("network_http"),
-        ],
-    ));
-    executive.register_agent(DynamicAgent::new(
-        "client_success_communication",
-        "Maintain client relationship health, onboarding satisfaction, and delivery check-ins",
-        vec![Capability::new("send_notification")],
-    ));
+    // 6. Dynamically load all specialist agent roles from Company Memory (Zero Hardcoding)
+    let agent_count = executive.load_all_agents_from_memory()?;
+    info!(
+        "Executive dynamically loaded {} specialist agent roles from Memory",
+        agent_count
+    );
 
     // 7. Initialize Goal Forest & Learning Engine
     let forest = Arc::new(RwLock::new(GoalForest::new()));

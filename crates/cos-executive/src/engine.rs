@@ -122,24 +122,49 @@ impl AutonomousEngine {
             };
 
             for task in ready_tasks {
-                // Determine tool and capability based on task or defaults
-                let (target_tool, required_capability) = match task.required_role.as_str() {
-                    "sales_and_lead" | "sales" => (
-                        "notification_sender".to_string(),
-                        Capability::new("send_notification"),
-                    ),
-                    "discovery_and_proposal" | "discovery" => (
+                // Dynamically resolve target tool & capability from the role's SOP in Memory (Zero Hardcoded If/Else)
+                let guideline_key = format!("sop:{}", task.required_role);
+                let sop_record = self
+                    .executive
+                    .memory_store
+                    .get_by_key(&MemoryNamespace::Company, &guideline_key, None)
+                    .ok()
+                    .flatten();
+
+                let (target_tool, required_capability) = if let Some(ref r) = sop_record {
+                    let tool = r
+                        .content
+                        .get("default_tool")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| {
+                            r.content
+                                .get("allowed_tools")
+                                .and_then(|v| v.as_array())
+                                .and_then(|arr| arr.first())
+                                .and_then(|v| v.as_str())
+                        })
+                        .unwrap_or("file_deliverable")
+                        .to_string();
+
+                    let default_cap = match tool.as_str() {
+                        "notification_sender" => "send_notification",
+                        "http_webhook" => "network_http",
+                        "web_research" => "web_research",
+                        _ => "filesystem_write",
+                    };
+
+                    let cap_str = r
+                        .content
+                        .get("default_capability")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(default_cap);
+
+                    (tool, Capability::new(cap_str))
+                } else {
+                    (
                         "file_deliverable".to_string(),
                         Capability::new("filesystem_write"),
-                    ),
-                    "client_success_communication" | "client_success" => (
-                        "notification_sender".to_string(),
-                        Capability::new("send_notification"),
-                    ),
-                    _ => (
-                        "file_deliverable".to_string(),
-                        Capability::new("filesystem_write"),
-                    ),
+                    )
                 };
 
                 let params = ProcessTaskParams {

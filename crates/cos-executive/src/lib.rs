@@ -154,6 +154,103 @@ impl CompanyExecutive {
             .insert(agent.role_name.clone(), agent);
     }
 
+    /// Returns an existing agent or dynamically loads and instantiates it from Memory.
+    pub fn get_or_load_agent(&self, role_name: &str) -> Result<DynamicAgent, ExecutiveError> {
+        {
+            let agents = self.agents.read().unwrap();
+            if let Some(agent) = agents.get(role_name) {
+                return Ok(agent.clone());
+            }
+        }
+
+        // Attempt to load from Memory (e.g. "sop:<role_name>" or "role:<role_name>")
+        let sop_key = format!("sop:{}", role_name);
+        let record_opt = self
+            .memory_store
+            .get_by_key(&MemoryNamespace::Company, &sop_key, None)
+            .ok()
+            .flatten();
+
+        if let Some(record) = record_opt {
+            let mission = record
+                .content
+                .get("mission")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Autonomous Specialist Role")
+                .to_string();
+
+            // Extract capabilities from allowed_tools or explicit capabilities
+            let mut capabilities = Vec::new();
+            if let Some(caps) = record
+                .content
+                .get("capabilities")
+                .and_then(|v| v.as_array())
+            {
+                for c in caps {
+                    if let Some(s) = c.as_str() {
+                        capabilities.push(Capability::new(s));
+                    }
+                }
+            } else if let Some(tools) = record
+                .content
+                .get("allowed_tools")
+                .and_then(|v| v.as_array())
+            {
+                for t in tools {
+                    if let Some(tool_str) = t.as_str() {
+                        match tool_str {
+                            "notification_sender" => {
+                                capabilities.push(Capability::new("send_notification"))
+                            }
+                            "file_deliverable" => {
+                                capabilities.push(Capability::new("filesystem_write"))
+                            }
+                            "http_webhook" => capabilities.push(Capability::new("network_http")),
+                            "web_research" => capabilities.push(Capability::new("web_research")),
+                            _ => capabilities.push(Capability::new(tool_str)),
+                        }
+                    }
+                }
+            }
+
+            if capabilities.is_empty() {
+                capabilities.push(Capability::new("filesystem_write"));
+            }
+
+            let new_agent = DynamicAgent::new(role_name, mission, capabilities);
+            self.register_agent(new_agent.clone());
+            return Ok(new_agent);
+        }
+
+        Err(ExecutiveError::UnknownRole(role_name.to_string()))
+    }
+
+    /// Dynamically discovers and registers all specialist agents defined in Company Memory.
+    pub fn load_all_agents_from_memory(&self) -> Result<usize, ExecutiveError> {
+        let records = self
+            .memory_store
+            .query_records(&MemoryNamespace::Company, None, None)
+            .map_err(|e| {
+                ExecutiveError::TaskError(format!("Failed to query company memory: {}", e))
+            })?;
+
+        let mut loaded = 0;
+        for record in records {
+            if record.key.starts_with("sop:") {
+                let role_name = record
+                    .content
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_else(|| record.key.trim_start_matches("sop:"));
+
+                if self.get_or_load_agent(role_name).is_ok() {
+                    loaded += 1;
+                }
+            }
+        }
+        Ok(loaded)
+    }
+
     /// Issues a short-lived TaskGrant for an agent to process a specific task.
     pub fn issue_scoped_grant(&self, params: GrantRequestParams) -> TaskGrant {
         TaskGrant {
@@ -195,14 +292,8 @@ impl CompanyExecutive {
         let now = Utc::now();
         let context = TraceContext::root(self.executive_identity.clone());
 
-        // 1. Find assigned agent
-        let agent = {
-            let agents = self.agents.read().unwrap();
-            agents
-                .get(&params.target_role)
-                .cloned()
-                .ok_or_else(|| ExecutiveError::UnknownRole(params.target_role.clone()))?
-        };
+        // 1. Find or dynamically load assigned agent from Memory
+        let agent = self.get_or_load_agent(&params.target_role)?;
 
         // 2. Create Task Record in Pending -> Assigned -> Planned
         let task_id = TaskId::new_v7();
@@ -383,13 +474,10 @@ impl CompanyExecutive {
                 ExecutiveError::TaskError(format!("Task running transition failed: {:?}", e))
             })?;
 
-        let agent_id = {
-            let agents = self.agents.read().unwrap();
-            agents
-                .get(&params.target_role)
-                .map(|a| a.agent_id)
-                .unwrap_or_else(AgentId::new_v7)
-        };
+        let agent_id = self
+            .get_or_load_agent(&params.target_role)
+            .map(|a| a.agent_id)
+            .unwrap_or_else(|_| AgentId::new_v7());
 
         // Risk-aware max_calls calculation:
         // - R4 and R3 actions are strictly 1 call (no automatic retries for critical side effects)
@@ -730,5 +818,79 @@ mod tests {
 
         // Clean up temp
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_dynamic_agent_discovery_and_loading_from_memory() {
+        let tenant_id = TenantId::new_v7();
+        let audit = Arc::new(InMemoryAuditLogger::new());
+        let memory = Arc::new(MemoryStore::new());
+        let tool_gateway = Arc::new(ToolGateway::new(audit.clone()));
+
+        let executive = CompanyExecutive::new(tenant_id, audit, memory.clone(), tool_gateway);
+
+        // Seed 2 new roles in Memory with zero compile-time code
+        let legal_sop = cos_memory::MemoryRecord::new(
+            MemoryNamespace::Company,
+            cos_memory::MemoryKind::Guideline,
+            "sop:legal_and_compliance",
+            serde_json::json!({
+                "role": "legal_and_compliance",
+                "mission": "Review agreements and ensure regulatory compliance",
+                "allowed_tools": ["file_deliverable", "notification_sender"],
+                "default_tool": "file_deliverable",
+                "default_capability": "filesystem_write"
+            }),
+            cos_domain::KnowledgeLifecycle::Verified,
+            1.0,
+            cos_memory::ProvenanceType::Learned,
+            ActorIdentity::system("test_admin"),
+        );
+        memory.store(legal_sop).unwrap();
+
+        let research_sop = cos_memory::MemoryRecord::new(
+            MemoryNamespace::Company,
+            cos_memory::MemoryKind::Guideline,
+            "sop:research_and_intel",
+            serde_json::json!({
+                "role": "research_and_intel",
+                "mission": "Investigate technical documentation and benchmark solutions",
+                "allowed_tools": ["web_research"],
+                "default_tool": "web_research",
+                "default_capability": "web_research"
+            }),
+            cos_domain::KnowledgeLifecycle::Verified,
+            1.0,
+            cos_memory::ProvenanceType::Learned,
+            ActorIdentity::system("test_admin"),
+        );
+        memory.store(research_sop).unwrap();
+
+        // Dynamically load all agents from memory
+        let count = executive
+            .load_all_agents_from_memory()
+            .expect("Loading agents failed");
+        assert_eq!(count, 2);
+
+        // Verify legal agent was dynamically instantiated with correct capabilities
+        let legal_agent = executive
+            .get_or_load_agent("legal_and_compliance")
+            .expect("Agent should exist");
+        assert_eq!(legal_agent.role_name, "legal_and_compliance");
+        assert!(legal_agent
+            .capabilities
+            .contains(&Capability::new("filesystem_write")));
+        assert!(legal_agent
+            .capabilities
+            .contains(&Capability::new("send_notification")));
+
+        // Verify research agent was dynamically instantiated with web_research capability
+        let research_agent = executive
+            .get_or_load_agent("research_and_intel")
+            .expect("Agent should exist");
+        assert_eq!(research_agent.role_name, "research_and_intel");
+        assert!(research_agent
+            .capabilities
+            .contains(&Capability::new("web_research")));
     }
 }

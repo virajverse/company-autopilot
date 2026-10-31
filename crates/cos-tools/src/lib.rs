@@ -98,7 +98,9 @@ impl InMemoryIdempotencyStore {
 
 pub mod adapters;
 
-pub use adapters::{FileDeliverableAdapter, HttpWebhookAdapter, NotificationToolAdapter};
+pub use adapters::{
+    FileDeliverableAdapter, HttpWebhookAdapter, NotificationToolAdapter, WebResearchToolAdapter,
+};
 
 /// Central Tool Gateway controlling all external side effects.
 pub struct ToolGateway {
@@ -413,5 +415,23 @@ mod tests {
         let result = adapter.execute(&payload).expect("Notification failed");
         assert_eq!(result["status"], "dispatched");
         assert_eq!(result["recipient"], "founder@example.com");
+    }
+
+    #[test]
+    fn test_web_research_tool_adapter() {
+        let adapter = WebResearchToolAdapter::new();
+        assert_eq!(adapter.tool_name(), "web_research");
+        assert_eq!(adapter.capability(), Capability::new("web_research"));
+
+        let payload = serde_json::json!({
+            "query": "Rust axum SSE stream architecture guidelines"
+        });
+        let result = adapter.execute(&payload).expect("Web research failed");
+        assert_eq!(result["status"], "research_completed");
+        assert_eq!(
+            result["query"],
+            "Rust axum SSE stream architecture guidelines"
+        );
+        assert!(result.get("confidence").is_some());
     }
 }
