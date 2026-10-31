@@ -115,24 +115,39 @@ pub async fn decide_approval(
 
     // SELF-LEARNING LOOP: Record the founder's verified decision into permanent Memory
     // Future runs query this precedent so identical decisions execute with zero hesitation.
+    let learned_content = serde_json::json!({
+        "task_id": request.task_id,
+        "decision": dec,
+        "guidance_reason": reason,
+        "action_digest": request.action_digest,
+        "risk_class": request.risk_class,
+        "learned_rule": format!("Verified founder decision '{}' applied to task '{}'", dec, request.task_id),
+    });
+
     let learned_memory = cos_memory::MemoryRecord::new(
         cos_memory::MemoryNamespace::Company,
         cos_memory::MemoryKind::Guideline,
         format!("policy:precedent:{}", request.task_id),
-        serde_json::json!({
-            "task_id": request.task_id,
-            "decision": dec,
-            "guidance_reason": reason,
-            "action_digest": request.action_digest,
-            "risk_class": request.risk_class,
-            "learned_rule": format!("Verified founder decision '{}' applied to task '{}'", dec, request.task_id),
-        }),
+        learned_content.clone(),
+        cos_domain::KnowledgeLifecycle::Verified,
+        1.0,
+        cos_memory::ProvenanceType::Learned,
+        approver.clone(),
+    );
+    let _ = state.store.save_record(&learned_memory);
+
+    // Also index by action digest for instantaneous O(1) self-learning auto-approval lookups
+    let digest_precedent = cos_memory::MemoryRecord::new(
+        cos_memory::MemoryNamespace::Company,
+        cos_memory::MemoryKind::Guideline,
+        format!("policy:precedent:digest:{}", request.action_digest),
+        learned_content,
         cos_domain::KnowledgeLifecycle::Verified,
         1.0,
         cos_memory::ProvenanceType::Learned,
         approver,
     );
-    let _ = state.store.save_record(&learned_memory);
+    let _ = state.store.save_record(&digest_precedent);
 
     // IMMUTABLE AUDIT TRAIL: Record the approval decision event
     let audit_event = AuditEvent::new(

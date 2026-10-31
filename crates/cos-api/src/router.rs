@@ -1,4 +1,6 @@
-use crate::routes::{approvals, audit, events, gateway, goals, health};
+use crate::routes::{
+    agents, approvals, audit, engine, events, gateway, goals, health, memories, plans,
+};
 use crate::state::AppState;
 use axum::{
     routing::{get, post},
@@ -17,6 +19,18 @@ pub fn build_app_router(state: AppState) -> Router {
         .route("/api/v1/health", get(health::health_check))
         // Real-Time Server-Sent Events (SSE) Stream
         .route("/api/v1/events/stream", get(events::stream_events))
+        // Dynamic Specialist Agents (Zero Hardcoding)
+        .route("/api/v1/agents", get(agents::list_agents))
+        // Dynamic Memory & Precedent Inspection
+        .route(
+            "/api/v1/memories",
+            get(memories::query_memories).post(memories::save_memory_record),
+        )
+        // Autonomous Engine Status & Tick Control
+        .route("/api/v1/engine/status", get(engine::get_engine_status))
+        .route("/api/v1/engine/tick", post(engine::trigger_engine_tick))
+        // Goal Execution Plans (DAG)
+        .route("/api/v1/plans/:goal_id", get(plans::get_plan_by_goal_id))
         // LLM Gateway Config & Tools (100% UI Match)
         .route(
             "/api/v1/gateway/config",

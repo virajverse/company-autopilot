@@ -17,6 +17,7 @@ use cos_domain::{
 use cos_identity::ActorIdentity;
 use cos_memory::{MemoryNamespace, MemoryStore};
 use cos_tools::{ToolExecutionResult, ToolGateway};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
@@ -58,6 +59,32 @@ pub struct GrantRequestParams {
     pub max_calls: u32,
     pub policy_version: u32,
     pub now: DateTime<Utc>,
+}
+
+/// The outcome of evaluating the 4-tier organizational escalation ladder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EscalationResolution {
+    /// Tier 1: Specialist autonomous execution within local role grant & memory.
+    Tier1Autonomous {
+        role: String,
+        reason: String,
+    },
+    /// Tier 2: Consult Executive / Reporting Manager memory policy.
+    Tier2ManagerConsultation {
+        policy_key: String,
+        guidance: String,
+    },
+    /// Tier 3: Trigger external web/document intelligence research.
+    Tier3WebResearchNeeded {
+        query: String,
+        target_role: String,
+    },
+    /// Tier 4: Founder cryptographic sign-off required.
+    Tier4FounderApprovalRequired {
+        action_digest: cos_contracts::ActionDigest,
+        risk_class: RiskClass,
+        summary: String,
+    },
 }
 
 /// Parameters for processing a generic task.
@@ -251,6 +278,96 @@ impl CompanyExecutive {
         Ok(loaded)
     }
 
+    /// Returns a list of all dynamically registered specialist agents.
+    pub fn list_registered_agents(&self) -> Vec<DynamicAgent> {
+        let agents = self.agents.read().unwrap();
+        agents.values().cloned().collect()
+    }
+
+    /// Evaluates a task scenario through the strict 4-Tier Escalation Ladder:
+    /// Tier 1 (Specialist) -> Tier 2 (Manager SOP) -> Tier 3 (Web Research) -> Tier 4 (Founder Approval)
+    pub fn evaluate_escalation_ladder(
+        &self,
+        task_title: &str,
+        target_role: &str,
+        risk_class: RiskClass,
+        payload: &serde_json::Value,
+    ) -> Result<EscalationResolution, ExecutiveError> {
+        // Tier 1: Low-risk tasks within autonomous specialist grant
+        if matches!(
+            risk_class,
+            RiskClass::R0InternalRead | RiskClass::R1ReversibleLowImpact
+        ) {
+            return Ok(EscalationResolution::Tier1Autonomous {
+                role: target_role.to_string(),
+                reason: format!(
+                    "Risk class {:?} allows autonomous specialist execution within grant",
+                    risk_class
+                ),
+            });
+        }
+
+        // Tier 2: Check domain manager escalation policy in Memory
+        let manager_policy_key = format!(
+            "policy:{}_escalation",
+            match target_role {
+                "sales_and_lead" | "discovery_and_proposal" => "commercial",
+                "tech_architect_and_coder" | "qa_and_auditor" => "technical",
+                "legal_and_compliance" => "legal",
+                _ => "manager",
+            }
+        );
+
+        if let Ok(Some(policy_record)) = self
+            .memory_store
+            .get_by_key(&MemoryNamespace::Company, &manager_policy_key, None)
+        {
+            if let Some(threshold) = policy_record
+                .content
+                .get("threshold_amount")
+                .and_then(|v| v.as_f64())
+            {
+                let amount = payload
+                    .get("contract_value_usd")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                if amount <= threshold {
+                    return Ok(EscalationResolution::Tier2ManagerConsultation {
+                        policy_key: manager_policy_key,
+                        guidance: format!("Approved within manager threshold limit ${}", threshold),
+                    });
+                }
+            }
+        }
+
+        // Tier 3: If external intelligence or missing context is required
+        let needs_research = payload
+            .get("requires_external_intel")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            || target_role == "research_and_intel";
+
+        if needs_research {
+            return Ok(EscalationResolution::Tier3WebResearchNeeded {
+                query: task_title.to_string(),
+                target_role: target_role.to_string(),
+            });
+        }
+
+        // Tier 4: Founder cryptographic sign-off required
+        let digest = cos_contracts::ActionDigest::compute(
+            format!("{}:{}:{:?}", task_title, target_role, risk_class).as_bytes(),
+        );
+        Ok(EscalationResolution::Tier4FounderApprovalRequired {
+            action_digest: digest,
+            risk_class,
+            summary: format!(
+                "Founder sign-off mandated for task '{}' (Risk {:?})",
+                task_title, risk_class
+            ),
+        })
+    }
+
     /// Issues a short-lived TaskGrant for an agent to process a specific task.
     pub fn issue_scoped_grant(&self, params: GrantRequestParams) -> TaskGrant {
         TaskGrant {
@@ -372,9 +489,48 @@ impl CompanyExecutive {
             )
             .map_err(ExecutiveError::TaskError)?;
 
-        // 6. Check risk class & Memory policy:
-        // - R3 and R4 strictly require human approval.
-        // - R2 requires approval UNLESS dynamic memory guideline explicitly enables routine pre-approved dispatch.
+        // 6. Check for Verified Self-Learning Precedent in Memory:
+        // If the Founder previously approved/rejected an identical action digest,
+        // we honor the learned policy precedent with 100% confidence.
+        let digest_precedent_key = format!("policy:precedent:digest:{}", proposal.action_digest);
+        let precedent_opt = self
+            .memory_store
+            .get_by_key(&MemoryNamespace::Company, &digest_precedent_key, None)
+            .ok()
+            .flatten();
+
+        let (has_verified_approval_precedent, has_verified_rejection_precedent) =
+            if let Some(ref prec) = precedent_opt {
+                if prec.lifecycle_status == cos_domain::KnowledgeLifecycle::Verified
+                    && prec.confidence >= 0.9
+                {
+                    let dec = prec
+                        .content
+                        .get("decision")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    match dec {
+                        "approve" | "approved" | "accept" | "yes" => (true, false),
+                        "reject" | "rejected" | "deny" | "no" => (false, true),
+                        _ => (false, false),
+                    }
+                } else {
+                    (false, false)
+                }
+            } else {
+                (false, false)
+            };
+
+        if has_verified_rejection_precedent {
+            return Err(ExecutiveError::TaskError(format!(
+                "Task '{}' automatically rejected based on permanent Founder precedent policy ({})",
+                params.task_title, digest_precedent_key
+            )));
+        }
+
+        // 7. Check risk class & Memory policy:
+        // - R3 and R4 strictly require human approval UNLESS a verified founder approval precedent exists.
+        // - R2 requires approval UNLESS dynamic memory guideline explicitly enables routine pre-approved dispatch or precedent exists.
         let is_r2_auto_allowed = if params.risk_class == RiskClass::R2ExternalCommunication {
             guideline_record.as_ref().is_some_and(|r| {
                 r.content
@@ -386,8 +542,23 @@ impl CompanyExecutive {
             false
         };
 
-        let requires_approval = params.risk_class.requires_human_approval()
-            || (params.risk_class == RiskClass::R2ExternalCommunication && !is_r2_auto_allowed);
+        let requires_approval = !has_verified_approval_precedent
+            && (params.risk_class.requires_human_approval()
+                || (params.risk_class == RiskClass::R2ExternalCommunication && !is_r2_auto_allowed));
+
+        if has_verified_approval_precedent {
+            self.audit_logger
+                .record(AuditEvent::new(
+                    context.clone(),
+                    AuditEventType::CommandReceived,
+                    Some(proposal.action_digest),
+                    format!(
+                        "Task '{}' auto-approved via verified self-learned precedent from previous Founder sign-off",
+                        params.task_title
+                    ),
+                ))
+                .ok();
+        }
 
         let approval = if requires_approval {
             task.status
@@ -1005,5 +1176,143 @@ mod tests {
         assert_eq!(engine.pending_approval_tasks.read().unwrap().len(), 0);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_self_learning_precedent_auto_approval() {
+        let audit_logger = Arc::new(InMemoryAuditLogger::new());
+        let memory_store = Arc::new(MemoryStore::new());
+        let tool_gateway = Arc::new(ToolGateway::new(audit_logger.clone()));
+        tool_gateway.register_tool(Arc::new(GenericTestTool));
+
+        let tenant_id = TenantId::new_v7();
+        let executive =
+            CompanyExecutive::new(tenant_id, audit_logger, memory_store.clone(), tool_gateway);
+
+        // Register specialist agent
+        executive.register_agent(DynamicAgent::new(
+            "tech_architect_and_coder",
+            "Designs architecture and writes modular code",
+            vec![Capability::new("code_execution")],
+        ));
+
+        let task_params = ProcessTaskParams {
+            task_title: "Deploy high-risk infrastructure module".to_string(),
+            target_role: "tech_architect_and_coder".to_string(),
+            task_payload: serde_json::json!({ "module": "auth_core" }),
+            memory_guideline_key: None,
+            target_tool: "dispatch_service".to_string(),
+            required_capability: Capability::new("filesystem_write"),
+            risk_class: RiskClass::R3BusinessCommitment,
+            client_scope: None,
+            custom_grant_duration_minutes: None,
+            custom_approval_duration_hours: None,
+            custom_max_calls: None,
+        };
+
+        // First execution: R3 strictly requires human approval
+        let (task1, approval1, digest1) = executive
+            .process_generic_task(task_params.clone())
+            .expect("First evaluation failed");
+        assert!(approval1.is_some(), "R3 task must initially require approval");
+        assert_eq!(task1.status, TaskStatus::AwaitingApproval);
+
+        // Founder approves the task -> Permanent Precedent indexed by digest is saved
+        let precedent = cos_memory::MemoryRecord::new(
+            MemoryNamespace::Company,
+            cos_memory::MemoryKind::Guideline,
+            format!("policy:precedent:digest:{}", digest1),
+            serde_json::json!({
+                "decision": "approve",
+                "action_digest": digest1,
+                "learned_rule": "Auto-approved auth_core deployment precedent"
+            }),
+            cos_domain::KnowledgeLifecycle::Verified,
+            1.0,
+            cos_memory::ProvenanceType::Learned,
+            ActorIdentity::founder(SubjectId::new_v7(), None),
+        );
+        memory_store.store(precedent).unwrap();
+
+        // Second execution: System detects verified precedent and auto-approves!
+        let (task2, approval2, _digest2) = executive
+            .process_generic_task(task_params)
+            .expect("Second evaluation failed");
+        assert!(
+            approval2.is_none(),
+            "Self-learned precedent must auto-approve without generating ApprovalRequest"
+        );
+        assert_eq!(task2.status, TaskStatus::Planned);
+    }
+
+    #[test]
+    fn test_four_tier_escalation_ladder() {
+        let audit_logger = Arc::new(InMemoryAuditLogger::new());
+        let memory_store = Arc::new(MemoryStore::new());
+        let tool_gateway = Arc::new(ToolGateway::new(audit_logger.clone()));
+
+        // Seed Tier 2 manager escalation policy with threshold limit $10,000
+        let manager_policy = cos_memory::MemoryRecord::new(
+            MemoryNamespace::Company,
+            cos_memory::MemoryKind::Guideline,
+            "policy:commercial_escalation".to_string(),
+            serde_json::json!({
+                "threshold_amount": 10000.0,
+                "domain": "commercial"
+            }),
+            cos_domain::KnowledgeLifecycle::Verified,
+            1.0,
+            cos_memory::ProvenanceType::Learned,
+            ActorIdentity::founder(SubjectId::new_v7(), None),
+        );
+        memory_store.store(manager_policy).unwrap();
+
+        let tenant_id = TenantId::new_v7();
+        let executive =
+            CompanyExecutive::new(tenant_id, audit_logger, memory_store, tool_gateway);
+
+        // Tier 1: Low risk internal task
+        let res1 = executive
+            .evaluate_escalation_ladder(
+                "Internal refactoring",
+                "tech_architect_and_coder",
+                RiskClass::R0InternalRead,
+                &serde_json::json!({}),
+            )
+            .unwrap();
+        assert!(matches!(res1, EscalationResolution::Tier1Autonomous { .. }));
+
+        // Tier 2: Commercial contract within manager policy threshold ($5,000 <= $10,000)
+        let res2 = executive
+            .evaluate_escalation_ladder(
+                "Sign small client proposal",
+                "sales_and_lead",
+                RiskClass::R2ExternalCommunication,
+                &serde_json::json!({ "contract_value_usd": 5000.0 }),
+            )
+            .unwrap();
+        assert!(matches!(res2, EscalationResolution::Tier2ManagerConsultation { .. }));
+
+        // Tier 3: Requires external intelligence
+        let res3 = executive
+            .evaluate_escalation_ladder(
+                "Research market competitor pricing",
+                "research_and_intel",
+                RiskClass::R2ExternalCommunication,
+                &serde_json::json!({ "requires_external_intel": true }),
+            )
+            .unwrap();
+        assert!(matches!(res3, EscalationResolution::Tier3WebResearchNeeded { .. }));
+
+        // Tier 4: Exceeds threshold or irreversible action without precedent -> Founder signoff
+        let res4 = executive
+            .evaluate_escalation_ladder(
+                "Sign mega contract",
+                "sales_and_lead",
+                RiskClass::R4IrreversibleCritical,
+                &serde_json::json!({ "contract_value_usd": 500000.0 }),
+            )
+            .unwrap();
+        assert!(matches!(res4, EscalationResolution::Tier4FounderApprovalRequired { .. }));
     }
 }

@@ -227,3 +227,90 @@ async fn test_api_with_sqlite_backend() {
         .unwrap();
     assert_eq!(approvals_res.status(), 200);
 }
+
+#[tokio::test]
+async fn test_agents_and_memories_api() {
+    let (base_url, store) = spawn_test_server().await;
+    let client = reqwest::Client::new();
+
+    // 1. Seed an SOP into company memory
+    let sop = cos_memory::MemoryRecord::new(
+        cos_memory::MemoryNamespace::Company,
+        cos_memory::MemoryKind::Procedure,
+        "sop:tech_architect_and_coder".to_string(),
+        serde_json::json!({
+            "role": "tech_architect_and_coder",
+            "mission": "Architectural blueprints and code implementation",
+            "allowed_tools": ["file_deliverable"]
+        }),
+        cos_domain::KnowledgeLifecycle::Verified,
+        1.0,
+        cos_memory::ProvenanceType::Learned,
+        cos_identity::ActorIdentity::founder(cos_domain::SubjectId::new_v7(), None),
+    );
+    store.save_record(&sop).unwrap();
+
+    // 2. Discover via GET /api/v1/agents
+    let agents_res = client
+        .get(format!("{}/api/v1/agents", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(agents_res.status(), 200);
+    let body: serde_json::Value = agents_res.json().await.unwrap();
+    assert!(body.get("count").unwrap().as_u64().unwrap() >= 1);
+
+    // 3. Query via GET /api/v1/memories
+    let mem_res = client
+        .get(format!(
+            "{}/api/v1/memories?namespace=company&key_prefix=sop:",
+            base_url
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mem_res.status(), 200);
+    let mem_body: serde_json::Value = mem_res.json().await.unwrap();
+    assert!(mem_body.get("count").unwrap().as_u64().unwrap() >= 1);
+
+    // 4. Inject dynamic memory record via POST /api/v1/memories
+    let new_rec = cos_memory::MemoryRecord::new(
+        cos_memory::MemoryNamespace::Company,
+        cos_memory::MemoryKind::Guideline,
+        "guideline:code_quality".to_string(),
+        serde_json::json!({ "max_function_length": 50 }),
+        cos_domain::KnowledgeLifecycle::Verified,
+        1.0,
+        cos_memory::ProvenanceType::Learned,
+        cos_identity::ActorIdentity::founder(cos_domain::SubjectId::new_v7(), None),
+    );
+    let post_res = client
+        .post(format!("{}/api/v1/memories", base_url))
+        .json(&new_rec)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(post_res.status(), 201);
+}
+
+#[tokio::test]
+async fn test_engine_status_and_plans_api() {
+    let (base_url, _store) = spawn_test_server().await;
+    let client = reqwest::Client::new();
+
+    // 1. GET /api/v1/engine/status
+    let status_res = client
+        .get(format!("{}/api/v1/engine/status", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(status_res.status(), 200);
+
+    // 2. GET /api/v1/plans/:invalid_uuid returns 400 Bad Request
+    let plan_res = client
+        .get(format!("{}/api/v1/plans/not-a-uuid", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(plan_res.status(), 400);
+}

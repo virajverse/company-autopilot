@@ -1,6 +1,10 @@
+pub mod agents;
 pub mod approvals;
 pub mod audit;
+pub mod engine;
 pub mod events;
 pub mod gateway;
 pub mod goals;
 pub mod health;
+pub mod memories;
+pub mod plans;

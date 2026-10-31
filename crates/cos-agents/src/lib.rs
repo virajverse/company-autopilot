@@ -29,7 +29,7 @@ pub struct AgentExecutionProposal {
 }
 
 /// Generic dynamic agent worker whose behavior is governed entirely by memory guidelines and task grants.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DynamicAgent {
     pub agent_id: AgentId,
     pub role_name: String,

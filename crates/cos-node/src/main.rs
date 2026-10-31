@@ -77,7 +77,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 8. Launch Autonomous Heartbeat Daemon in background (with persistent approval query port)
     let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let engine = Arc::new(
-        AutonomousEngine::new(executive, forest, learning).with_approval_query(store.clone()),
+        AutonomousEngine::new(executive.clone(), forest.clone(), learning)
+            .with_approval_query(store.clone()),
     );
     let engine_worker = engine.clone();
     tokio::spawn(async move {
@@ -87,7 +88,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // 9. Construct application state and API router
-    let app_state = AppState::new(store);
+    let app_state = AppState::new(store)
+        .with_executive(executive)
+        .with_engine(engine)
+        .with_forest(forest);
     let router = build_app_router(app_state);
 
     // 10. Resolve listening host and port
@@ -107,6 +111,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("- Verify Connection:   POST    /api/v1/gateway/verify-connection");
     info!("- Test Connection:     POST    /api/v1/gateway/test-connection");
     info!("- Model Discovery:     GET     /api/v1/gateway/discover-models");
+    info!("- Specialist Agents:   GET     /api/v1/agents");
+    info!("- Memory Inspection:   GET/POST/api/v1/memories");
+    info!("- Engine Status:       GET     /api/v1/engine/status");
+    info!("- Trigger Engine Tick: POST    /api/v1/engine/tick");
+    info!("- Execution Plans:     GET     /api/v1/plans/:goal_id");
     info!("- Real-time Stream:    GET     /api/v1/events/stream");
     info!("- Approvals Inbox:     GET     /api/v1/approvals");
     info!("- Goal Forest:         GET/POST/api/v1/goals");

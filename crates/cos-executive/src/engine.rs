@@ -29,7 +29,7 @@ pub struct PendingTaskExecution {
 }
 
 /// Summary of activity performed during a single autonomous engine tick.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TickSummary {
     pub goals_evaluated: usize,
     pub plans_generated: usize,
@@ -85,6 +85,52 @@ impl AutonomousEngine {
     pub fn with_approval_query(mut self, port: Arc<dyn ApprovalQueryPort>) -> Self {
         self.approval_query = Some(port);
         self
+    }
+
+    /// Returns the current runtime execution plans for active goals.
+    pub fn get_plans(&self) -> HashMap<GoalId, ExecutionPlan> {
+        self.plans.read().unwrap().clone()
+    }
+
+    /// Returns the set of completed task IDs.
+    pub fn get_completed_tasks(&self) -> HashSet<TaskId> {
+        self.completed_tasks.read().unwrap().clone()
+    }
+
+    /// Returns the currently pending task executions awaiting human decision.
+    pub fn get_pending_tasks(&self) -> Vec<PendingTaskExecution> {
+        self.pending_approval_tasks
+            .read()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    /// Returns high-level engine status summary for monitoring and dashboards.
+    pub fn get_status_summary(&self) -> serde_json::Value {
+        let plans = self.plans.read().unwrap();
+        let completed = self.completed_tasks.read().unwrap();
+        let pending = self.pending_approval_tasks.read().unwrap();
+
+        serde_json::json!({
+            "active_plans_count": plans.len(),
+            "completed_tasks_count": completed.len(),
+            "pending_approvals_count": pending.len(),
+            "pending_tasks": pending
+                .values()
+                .map(|p| {
+                    serde_json::json!({
+                        "task_id": p.task_id,
+                        "goal_id": p.goal_id,
+                        "title": p.title,
+                        "required_role": p.required_role,
+                        "risk_class": p.risk_class,
+                        "approval_id": p.approval.approval_id,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
     }
 
     /// Performs one discrete pass of the autonomous executive loop in strict causal sequence:

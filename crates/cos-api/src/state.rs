@@ -1,3 +1,5 @@
+use cos_executive::{AutonomousEngine, CompanyExecutive};
+use cos_goals::GoalForest;
 use cos_llm::{HttpInferenceGateway, LlmGatewayConfig, LlmPort, UnconfiguredLlmGateway};
 use cos_persistence::{FileStore, GatewayConfigRepository, PersistenceEngine, SqliteStore};
 use std::sync::{Arc, RwLock};
@@ -8,6 +10,9 @@ pub struct AppState {
     pub store: Arc<PersistenceEngine>,
     pub llm_port: Arc<RwLock<Arc<dyn LlmPort>>>,
     pub event_bus: tokio::sync::broadcast::Sender<String>,
+    pub executive: Option<Arc<CompanyExecutive>>,
+    pub engine: Option<Arc<AutonomousEngine>>,
+    pub forest: Option<Arc<RwLock<GoalForest>>>,
 }
 
 impl AppState {
@@ -23,7 +28,25 @@ impl AppState {
             store,
             llm_port: Arc::new(RwLock::new(port)),
             event_bus,
+            executive: None,
+            engine: None,
+            forest: None,
         }
+    }
+
+    pub fn with_executive(mut self, executive: Arc<CompanyExecutive>) -> Self {
+        self.executive = Some(executive);
+        self
+    }
+
+    pub fn with_engine(mut self, engine: Arc<AutonomousEngine>) -> Self {
+        self.engine = Some(engine);
+        self
+    }
+
+    pub fn with_forest(mut self, forest: Arc<RwLock<GoalForest>>) -> Self {
+        self.forest = Some(forest);
+        self
     }
 
     pub fn from_file_store(store: Arc<FileStore>) -> Self {
@@ -40,6 +63,9 @@ impl AppState {
             store,
             llm_port: Arc::new(RwLock::new(port)),
             event_bus,
+            executive: None,
+            engine: None,
+            forest: None,
         }
     }
 
